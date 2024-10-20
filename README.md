@@ -1,6 +1,6 @@
 
 
-# Thin Slice Classifier
+# Apollo Rock Thin Section Classifier
 This document outlines the functionality of various approaches within the Thin Slice Classifier project.
 
 Authors: Freja Thoresen, Aidan Cowley, Romeo Haak, Jonas Lewe, Clara Moriceau, Piotr Knapczyk, Victoria Engelschion
