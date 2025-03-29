@@ -1,33 +1,40 @@
 import os
-from keras import applications
+from typing import Any, Dict
 
-from apollo_petro_ai.machine_learning.optimizer.lars_optimizer import LARSOptimizer
-from apollo_petro_ai.data_management.data_augmentation import preprocess_for_eval, preprocess_for_train
+import keras_cv
+import matplotlib.pyplot as plt
+import numpy as np
+import tensorflow as tf
+import wandb
+from keras import applications, layers
+from keras.models import Sequential, load_model
+from keras_cv.losses import SimCLRLoss
+from sklearn.cluster import KMeans
+from sklearn.metrics import accuracy_score
+from tensorflow.keras.callbacks import EarlyStopping
 
 from .Network import Network
-from keras.models import load_model
-import tensorflow as tf
-from keras import callbacks, layers, losses, optimizers
-from sklearn.metrics import accuracy_score, silhouette_score
-import wandb
-import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.cluster import KMeans
-from keras.models import Model, Sequential
-from keras.layers import Dense, Dropout, GlobalAveragePooling2D, Input
-from tensorflow.keras.callbacks import EarlyStopping
-from keras_cv.losses import SimCLRLoss
-import keras_cv
 
-experiment1_data = {"target": None, "predictions": [], "files": []}
+experiment1_data: Dict[str, Any] = {"target": None, "predictions": [], "files": []}
 
 
 class SimCLR(Network):
-    def __init__(self, path, learning_rate, momentum, weight_decay, train_dir, val_dir, test_dir, my_weights="imagenet", **parameters):
+    def __init__(
+        self,
+        path,
+        learning_rate: float = 0.0001,
+        momentum=0.9,
+        weight_decay=0.0,
+        train_dir="",
+        val_dir="",
+        test_dir="",
+        my_weights="imagenet",
+        **parameters,
+    ):
         # dimensions of our images.
         img_width, img_height = 299, 299
-        self.steps_per_epoch =8
-        self.weight_decay=weight_decay
+        self.steps_per_epoch = 8
+        self.weight_decay = weight_decay
         super().__init__(
             img_width,
             img_height,
@@ -38,9 +45,9 @@ class SimCLR(Network):
             learning_rate=learning_rate,
             finetune_learning_rate=0.0001,
             cut_off=630,
-        )   
+        )
         self.my_weights = my_weights
-        
+
         self.sim_clr_loss = SimCLRLoss(temperature=0.5)
         self.contrast_transformer = self.data_augmentation()
         # self.optimizer = LARSOptimizer(
@@ -54,19 +61,19 @@ class SimCLR(Network):
         #     ],
         #     name="LARSOptimizer",
         # )
-        
-        self.model, self.class_head = self.compile_model() #path
-    
+
+        self.model, self.class_head = self.compile_model()  # path
+
     def configure_optimizers(self):
         optimizer = tf.keras.optimizers.AdamW(
-            learning_rate=self.learning_rate,
-            weight_decay=self.weight_decay
+            learning_rate=self.learning_rate, weight_decay=self.weight_decay
         )
 
         lr_scheduler = tf.keras.optimizers.schedules.CosineDecay(
             initial_learning_rate=self.learning_rate,
-            decay_steps=self.epochs * self.steps_per_epoch,  # Assuming you have `steps_per_epoch` defined
-            alpha=self.learning_rate / 50
+            decay_steps=self.epochs
+            * self.steps_per_epoch,  # Assuming you have `steps_per_epoch` defined
+            alpha=self.learning_rate / 50,
         )
 
         lr_scheduler_callback = tf.keras.callbacks.LearningRateScheduler(lr_scheduler)
@@ -75,26 +82,29 @@ class SimCLR(Network):
 
     def pretrained_model(self):
         return applications.inception_resnet_v2.InceptionResNetV2(
-            include_top=False, input_shape=(self.img_width, self.img_height, 3), weights=self.my_weights
+            include_top=False,
+            input_shape=(self.img_width, self.img_height, 3),
+            weights=self.my_weights,
         )
-    
+
     def data_augmentation(self):
-        contrast_transforms = tf.keras.Sequential([
-            layers.RandomFlip("horizontal"),
-            layers.RandomFlip("vertical"),
-            #layers.RandomCrop(height=96, width=96),
-            layers.RandomZoom(height_factor=(-0.7, 0.)),  # Randomly zoom in or out            
-            layers.Resizing(height=299, width=299),
-            layers.RandomBrightness(factor=0.3, value_range=(0, 255)),  # brightness
-            layers.RandomContrast(factor=0.3),  # contrast
-            keras_cv.layers.RandomSaturation(factor=(0.3, 0.7)),  # saturation
-            keras_cv.layers.RandomHue(factor=0.1, value_range=(0, 255)),  # hue
-            #layers.Normalization(mean=(0.5), variance=(0.5)),
-            layers.Rescaling(1./255),  # Convert to [0, 1] range
-        ])
+        contrast_transforms = tf.keras.Sequential(
+            [
+                layers.RandomFlip("horizontal"),
+                layers.RandomFlip("vertical"),
+                # layers.RandomCrop(height=96, width=96),
+                layers.RandomZoom(height_factor=(-0.7, 0.0)),  # Randomly zoom in or out
+                layers.Resizing(height=299, width=299),
+                layers.RandomBrightness(factor=0.3, value_range=(0, 255)),  # brightness
+                layers.RandomContrast(factor=0.3),  # contrast
+                keras_cv.layers.RandomSaturation(factor=(0.3, 0.7)),  # saturation
+                keras_cv.layers.RandomHue(factor=0.1, value_range=(0, 255)),  # hue
+                # layers.Normalization(mean=(0.5), variance=(0.5)),
+                layers.Rescaling(1.0 / 255),  # Convert to [0, 1] range
+            ]
+        )
         return contrast_transforms
-        
-    
+
     def compile_model(self):
         # Load and freeze the pretrained transfer learning model
         saved_model = self.pretrained_model()
@@ -104,13 +114,13 @@ class SimCLR(Network):
         # data_augmentation = self.data_augmentation()
 
         # Main structure of the model, adding our own classification head at the end
-        #inputs = Input(shape=(self.img_width, self.img_height, 3))
-        #features = data_augmentation(inputs)
-        #features = saved_model(features, training=False)
-        #features = GlobalAveragePooling2D()(features)
-        #features = Dense(256, activation="relu")(features)
-        #features = Dropout(0.2)(features)
-        #outputs = Dense(1)(features)
+        # inputs = Input(shape=(self.img_width, self.img_height, 3))
+        # features = data_augmentation(inputs)
+        # features = saved_model(features, training=False)
+        # features = GlobalAveragePooling2D()(features)
+        # features = Dense(256, activation="relu")(features)
+        # features = Dropout(0.2)(features)
+        # outputs = Dense(1)(features)
 
         # Add simple new non-linear classification head
         class_head = Sequential(
@@ -123,23 +133,24 @@ class SimCLR(Network):
             name="head_supervised_new",
         )
 
-        #class_head_model = Model(inputs=inputs, outputs=outputs)
-        
-        #class_head_model.summary(
+        # class_head_model = Model(inputs=inputs, outputs=outputs)
+
+        # class_head_model.summary(
         #    line_length=None,
         #    positions=None,
         #    print_fn=None,
         #    expand_nested=False,
         #    show_trainable=False,
         #    layer_range=None,
-        #)
-        self.optimizer, self.lr_scheduler_callback=self.configure_optimizers()
-        self.finetune_optimizer, self.finetune_lr_scheduler_callback=self.configure_optimizers()
+        # )
+        self.optimizer, self.lr_scheduler_callback = self.configure_optimizers()
+        self.finetune_optimizer, self.finetune_lr_scheduler_callback = (
+            self.configure_optimizers()
+        )
         return saved_model, class_head
 
     def train_step(self, x):
-        """
-        Forward and backward pass for a single training step.
+        """Forward and backward pass for a single training step.
 
         Args:
             x: current batch of data
@@ -147,17 +158,16 @@ class SimCLR(Network):
         Returns:
             loss: the computed loss for the batch
         """
-
         with tf.GradientTape() as tape:
             loss = self.forward(x)  # Compute the loss using your model's forward pass
 
         # Get trainable weights and calculate gradients
-        trainable_variables = self.trainable_variables 
+        trainable_variables = self.trainable_variables
         gradients = tape.gradient(loss, trainable_variables)
 
         # Apply gradients using the optimizer
         self.optimizer.apply_gradients(zip(gradients, trainable_variables))
-        
+
         return loss
 
     def forward(self, x):
@@ -165,43 +175,43 @@ class SimCLR(Network):
 
         image_aug_1 = self.contrast_transformer(image_data)
         image_aug_2 = self.contrast_transformer(image_data)
-        
+
         outputs_1 = self.class_head(self.model(image_aug_1))
         outputs_2 = self.class_head(self.model(image_aug_2))
-        
+
         loss = self.sim_clr_loss(outputs_1, outputs_2)
         return loss
-    
-    def train(self, fine_tune=False):
+
+    def train(self, fine_tune: bool = False, fold: str = ""):
         """Fine-tunes the model for a few epochs with early stopping"""
         self.model.trainable = True
         for layer in self.model.layers[: self.cut_off]:
             layer.trainable = False
-        
+
         # Get training and validation set as well as class weights
         train_ds, valid_ds, class_weights = self.fetch_for_train()
-        
+
         loss_per_epoch = []
 
         # Early stopping callback
         early_stopping = EarlyStopping(
-            monitor='val_loss',  # Monitor validation loss
-            patience=2,           # Stop if validation loss doesn't improve for 2 consecutive epochs
-            #restore_best_weights=True  # Restore model weights to the epoch with the best validation loss
+            monitor="val_loss",  # Monitor validation loss
+            patience=2,  # Stop if validation loss doesn't improve for 2 consecutive epochs
+            # restore_best_weights=True  # Restore model weights to the epoch with the best validation loss
         )
 
         for epoch in range(self.epochs):
-            total_loss = 0 
+            total_loss = 0
             num_samples = 0
 
             for data_batch in train_ds.as_numpy_iterator():
                 im, labels = data_batch
 
                 if im.shape[0] != self.batch_size:
-                    continue                
+                    continue
                 loss = self.train_step((im, labels))
                 wandb.log({"Batch loss": loss})
-                
+
                 total_loss += loss
                 num_samples += im.shape[0]
 
@@ -209,30 +219,32 @@ class SimCLR(Network):
             loss_per_epoch.append(average_loss)
 
             # Evaluate on validation set at the end of each epoch
-            val_loss = self.calculate_loss(valid_ds) #valid_ds
+            val_loss = self.calculate_loss(valid_ds)  # valid_ds
             wandb.log({"Loss": average_loss})
             wandb.log({"Validation loss": val_loss})
             wandb.log({"Epoch": epoch})
 
-            print(f'Epoch: {epoch}, loss: {average_loss}, val_loss: {val_loss}')
-            self.save_model(self.model, f'simclr_model_epoch_{epoch}')
+            print(f"Epoch: {epoch}, loss: {average_loss}, val_loss: {val_loss}")
+            self.save_model(self.model, f"simclr_model_epoch_{epoch}")
 
             # Early stopping check
-            #early_stopping.on_epoch_end(epoch, logs={'val_loss': val_loss})
-            #if early_stopping.stopped_epoch:
+            # early_stopping.on_epoch_end(epoch, logs={'val_loss': val_loss})
+            # if early_stopping.stopped_epoch:
             #    print("Early stopping triggered!")
             #    break
-            
-            # Update learning rate at the end of each epoch
-            # self.lr_scheduler_callback.on_epoch_end(epoch, logs={average_loss.ref()}) 
 
-        self.save_model(self.model, 'simclr_model')
-        
+            # Update learning rate at the end of each epoch
+            # self.lr_scheduler_callback.on_epoch_end(epoch, logs={average_loss.ref()})
+
+        self.save_model(self.model, "simclr_model")
+
         return [], [], self.model
 
     def save_model(self, model, run_name):
         # "model.h5" is saved in wandb.run.dir & will be uploaded at the end of training
-        model.save_weights(os.path.join(wandb.run.dir, f"{run_name}.weights.h5"), overwrite=True)
+        model.save_weights(
+            os.path.join(wandb.run.dir, f"{run_name}.weights.h5"), overwrite=True
+        )
         model.save(os.path.join(wandb.run.dir, f"{run_name}.keras"), overwrite=True)
 
         # Save a model file manually from the current directory:
@@ -245,32 +257,30 @@ class SimCLR(Network):
         # Save any files starting with "checkpoint" as they're written to:
         # wandb.save(os.path.join(wandb.run.dir, "checkpoint*"))
         return
-            
-    def fine_tune(self):
-        
+
+    def fine_tune(self, model, log_path="1_binary_classifier/logs/ft", fold=""):
         """Fine-tunes the model for a few epochs with early stopping"""
-        
         # Get training and validation set as well as class weights
         train_ds, valid_ds, class_weights = self.fetch_for_train()
-        
+
         loss_per_epoch = []
 
         # Early stopping callback
         early_stopping = EarlyStopping(
-            monitor='val_loss',  # Monitor validation loss
-            patience=2,           # Stop if validation loss doesn't improve for 2 consecutive epochs
-            #restore_best_weights=True  # Restore model weights to the epoch with the best validation loss
+            monitor="val_loss",  # Monitor validation loss
+            patience=2,  # Stop if validation loss doesn't improve for 2 consecutive epochs
+            # restore_best_weights=True  # Restore model weights to the epoch with the best validation loss
         )
 
         for epoch in range(self.finetune_epochs):
-            total_loss = 0 
+            total_loss = 0
             num_samples = 0
 
             for data_batch in train_ds.as_numpy_iterator():
                 im, labels = data_batch
                 loss = self.train_step((im, labels))
                 wandb.log({"Finetune batch loss": loss})
-                
+
                 total_loss += loss
                 num_samples += im.shape[0]
 
@@ -282,67 +292,62 @@ class SimCLR(Network):
             val_loss = self.calculate_loss(valid_ds)
             wandb.log({"Finetune validation loss": val_loss})
 
-            print(f'Epoch: {epoch}, loss: {average_loss}, val_loss: {val_loss}')
+            print(f"Epoch: {epoch}, loss: {average_loss}, val_loss: {val_loss}")
 
             # Early stopping check
-            early_stopping.on_epoch_end(epoch, logs={'val_loss': val_loss})
+            early_stopping.on_epoch_end(epoch, logs={"val_loss": val_loss})
             if early_stopping.stopped_early:
                 print("Early stopping triggered!")
                 break
-            
+
             # Update learning rate at the end of each epoch
-            self.lr_scheduler_callback.on_epoch_end(epoch, logs={average_loss})      
-        
+            self.lr_scheduler_callback.on_epoch_end(epoch, logs={average_loss})
+
         self.model.export("2_contrastive_learning/models/simclr_finetuned.keras")
-        
+
         return
 
-    
     def calculate_loss(self, ds, take=0):
         """Evaluate model performance on dataset"""
-
-        total_loss = 0 
+        total_loss = 0
         no_images = 0
-        
+
         if take > 0:
             # Iterate over the validation dataset only once
-            for images, labels in ds.take(take): 
+            for images, labels in ds.take(take):
                 loss = self.forward((images, labels))
                 total_loss += loss
                 no_images += images.shape[0]
         else:
             # Iterate over the validation dataset only once
-            for images, labels in ds.as_numpy_iterator(): 
+            for images, labels in ds.as_numpy_iterator():
                 loss = self.forward((images, labels))
                 total_loss += loss
                 no_images += images.shape[0]
-            
-        return total_loss/no_images
+
+        return total_loss / no_images
 
     def calculate_accuracy(self, ds):
         """Evaluate model performance on dataset"""
-
         all_labels = []
         all_preds = []
-        total_loss = 0 
+        total_loss = 0
         no_images = 0
         # Iterate over the validation dataset only once
-        for images, labels, _ in ds.as_numpy_iterator(): 
+        for images, labels, _ in ds.as_numpy_iterator():
             loss, _, logits = self.forward((images, labels))
             total_loss += loss
             logits = logits.numpy()
             all_labels.extend(labels > 0.5)
             all_preds.extend(logits > 0.5)
             no_images += images.shape[0]
-        
-        print(f'Test accuracy: {accuracy_score(all_labels, all_preds)}')
-        print(f'Test loss: {total_loss/no_images}') 
+
+        print(f"Test accuracy: {accuracy_score(all_labels, all_preds)}")
+        print(f"Test loss: {total_loss / no_images}")
         return accuracy_score(all_labels, all_preds)
 
-
     def cluster_representations(self, x):
-        """
-        Clusters and plots images for user to evaluate performance of the model
+        """Clusters and plots images for user to evaluate performance of the model
         Args:
             x: current batch of images
 
@@ -404,9 +409,9 @@ class SimCLR(Network):
             ax[0, 1].set_title("original image")
             ax[0, 2].remove()
             for i, top_ax in enumerate(ax[1]):
-                top_ax.set_title(f"{(i+1)*2} clusters")
+                top_ax.set_title(f"{(i + 1) * 2} clusters")
             for i, side_ax in enumerate(ax[1:, 0]):
-                side_ax.set_ylabel(f"block group{4-i}")
+                side_ax.set_ylabel(f"block group{4 - i}")
 
             figure_helper(visual4[index], ax[1, :], block4_out.shape)
             figure_helper(visual3[index], ax[2, :], block3_out.shape)
@@ -461,9 +466,11 @@ class VGG19(Network):
             input_shape=(self.img_width, self.img_height, 3),
         )
 
- 
+
 class InceptionResNet(Network):
-    def __init__(self, train_dir, val_dir, test_dir, my_weights="imagenet", **parameters):
+    def __init__(
+        self, train_dir, val_dir, test_dir, my_weights="imagenet", **parameters
+    ):
         # dimensions of our images.
         img_width, img_height = 299, 299
         super().__init__(
@@ -473,22 +480,24 @@ class InceptionResNet(Network):
             val_dir,
             test_dir,
             **parameters,
-            #learning_rate=0.001,
-            #fine_tune_learning_rate=0.0001,
+            # learning_rate=0.001,
+            # fine_tune_learning_rate=0.0001,
             cut_off=630,
         )
         self.my_weights = my_weights
         self.saved_model, self.model = self.compile_model()
 
     def pretrained_model(self):
+        """Returns the pretrained model."""
         return applications.inception_resnet_v2.InceptionResNetV2(
-            include_top=False, input_shape=(self.img_width, self.img_height, 3), weights=self.my_weights
+            include_top=False,
+            input_shape=(self.img_width, self.img_height, 3),
+            weights=self.my_weights,
         )
 
 
 def performance(network_loc):
-    """
-    Args:
+    """Args:
         network_loc: location the network is saved
     Can be used to check performance of the model
     Returns:

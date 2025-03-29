@@ -1,16 +1,16 @@
 import os
-import shutil
-import numpy as np
 import random
+import shutil
+from typing import Any, Dict
 
+import numpy as np
 from sklearn.model_selection import StratifiedKFold
 
 from ...machine_learning.network.stratified_group_kfold import StratifiedGroupKFold
 
 
 def copy_categories(X, y, destination_dir):
-    """
-    Copy files from their original directory to the newly constructed train or test directory
+    """Copy files from their original directory to the newly constructed train or test directory
     specified by destination_dir
     Args:
         X: paths to images
@@ -29,12 +29,12 @@ def copy_categories(X, y, destination_dir):
         target = category_dir + "/" + filename
         # Copy from original location to destination
         shutil.copy(path, target)
-    
+
 
 def process_split(X, y, t_fold, test_fold, training_dir, testing_dir):
-    """
-    Helper function to retrieve the images and labels for this particular fold and move the respective images and labels
+    """Helper function to retrieve the images and labels for this particular fold and move the respective images and labels
     in the training_dir and testing_dir accordingly.
+
     Args:
         X: paths of all images
         y: labels of images specifying the class
@@ -57,14 +57,14 @@ def process_split(X, y, t_fold, test_fold, training_dir, testing_dir):
     X_test = [X[i] for i in test_fold]
     y_test = [y[i] for i in test_fold]
 
-    if training_dir.count('/') > 1:
+    if training_dir.count("/") > 1:
         print("t: ", training_dir)
         shutil.rmtree(training_dir, ignore_errors=True)
         os.makedirs(training_dir)
     else:
         print("Refusing!")
 
-    if testing_dir.count('/') > 1:
+    if testing_dir.count("/") > 1:
         shutil.rmtree(testing_dir, ignore_errors=True)
         os.makedirs(testing_dir)
     else:
@@ -79,8 +79,7 @@ def get_sample_id(filename):
 
 
 def generate_splits(all_data_dir, n_splits, preserve_groups=True):
-    """
-    Assumes the classes are split into directories after which the images are collected along with the folder name
+    """Assumes the classes are split into directories after which the images are collected along with the folder name
     of that specific class directory as a label. Then creates n_splits=K folds to use for later
     Args:
         all_data_dir: directory where all images are saved
@@ -108,9 +107,10 @@ def generate_splits(all_data_dir, n_splits, preserve_groups=True):
     temp = list(zip(paths, labels, groups))
     random.shuffle(temp)
     if len(temp) == 0:
-        raise ValueError("The data folder is empty or does not exist, therefore length of files is zero.")
-    paths, labels, groups = zip(*temp)
-    paths, labels, groups = list(paths), list(labels), list(groups)
+        raise ValueError(
+            "The data folder is empty or does not exist, therefore length of files is zero."
+        )
+    paths, labels, groups = map(list, zip(*temp))
     if preserve_groups:
         k_fold = StratifiedGroupKFold(n_splits=n_splits, shuffle=True)
         # k_fold = GroupShuffleSplit(n_splits=n_splits)
@@ -118,14 +118,20 @@ def generate_splits(all_data_dir, n_splits, preserve_groups=True):
     else:
         # Use K-fold to create splits, uses ~1/n_splits% for testing
         k_fold = StratifiedKFold(n_splits=n_splits, shuffle=True)
-        folds = k_fold.split(paths, labels)
+        folds = k_fold.split(paths, labels, group=None)
     return folds, paths, labels
-   
 
-def split_dataset_into_test_and_train_sets(all_data_dir, training_data_dir, testing_data_dir, testing_data_pct,
-                                           preserve_groups=True, seed=None):
-    """
-    Helper to split the dataset into a train and test set whilst keeping the directory indicating the class intact.
+
+def split_dataset_into_test_and_train_sets(
+    all_data_dir,
+    training_data_dir,
+    testing_data_dir,
+    testing_data_pct,
+    preserve_groups=True,
+    seed=None,
+):
+    """Helper to split the dataset into a train and test set whilst keeping the directory indicating the class intact.
+
     Args:
         all_data_dir: where all data is saved
         training_data_dir: the folder where the training data should be copied to
@@ -140,26 +146,32 @@ def split_dataset_into_test_and_train_sets(all_data_dir, training_data_dir, test
     np.random.seed(seed)
 
     # Recreate testing and training directories
-    if testing_data_dir.count('/') > 1:
+    if testing_data_dir.count("/") > 1:
         shutil.rmtree(testing_data_dir, ignore_errors=True)
         os.makedirs(testing_data_dir)
         print("Successfully cleaned directory " + testing_data_dir)
     else:
-        print("Refusing to delete testing data directory " + testing_data_dir +
-              " as we prevent you from doing stupid things!")
+        print(
+            "Refusing to delete testing data directory "
+            + testing_data_dir
+            + " as we prevent you from doing stupid things!"
+        )
 
-    if training_data_dir.count('/') > 1:
+    if training_data_dir.count("/") > 1:
         shutil.rmtree(training_data_dir, ignore_errors=True)
         os.makedirs(training_data_dir)
         print("Successfully cleaned directory " + training_data_dir)
     else:
-        print("Refusing to delete testing data directory " + training_data_dir +
-              " as we prevent you from doing stupid things!")
+        print(
+            "Refusing to delete testing data directory "
+            + training_data_dir
+            + " as we prevent you from doing stupid things!"
+        )
 
     num_training_files = 0
     num_testing_files = 0
-    
-    sample_dataset_map = {}
+
+    sample_dataset_map: Dict[str, Any] = {}
     # Create folders in training and testing directory based on folder names in all_data_dir
     for subdir, dirs, files in os.walk(all_data_dir):
         category_name = os.path.basename(subdir)
@@ -169,8 +181,8 @@ def split_dataset_into_test_and_train_sets(all_data_dir, training_data_dir, test
         if category_name == os.path.basename(all_data_dir):
             continue
 
-        training_data_category_dir = training_data_dir + '/' + category_name
-        testing_data_category_dir = testing_data_dir + '/' + category_name
+        training_data_category_dir = training_data_dir + "/" + category_name
+        testing_data_category_dir = testing_data_dir + "/" + category_name
         print(training_data_category_dir)
         if not os.path.exists(training_data_category_dir):
             os.mkdir(training_data_category_dir)
@@ -192,10 +204,14 @@ def split_dataset_into_test_and_train_sets(all_data_dir, training_data_dir, test
                 belongs_to_testing = np.random.rand(1) < testing_data_pct
 
             if belongs_to_testing:
-                shutil.copy(input_file, testing_data_dir + '/' + category_name + '/' + file)
+                shutil.copy(
+                    input_file, testing_data_dir + "/" + category_name + "/" + file
+                )
                 num_testing_files += 1
             else:
-                shutil.copy(input_file, training_data_dir + '/' + category_name + '/' + file)
+                shutil.copy(
+                    input_file, training_data_dir + "/" + category_name + "/" + file
+                )
                 num_training_files += 1
 
     print("Processed " + str(num_training_files) + " training files.")
@@ -204,8 +220,10 @@ def split_dataset_into_test_and_train_sets(all_data_dir, training_data_dir, test
 
 def test():
     folds, X, y = generate_splits("../datasets/rock_type", 5)
-    for (train, val) in folds:
-        process_split(X, y, train, val, "processing/binary/train", "processing/binary/test")
+    for train, val in folds:
+        process_split(
+            X, y, train, val, "processing/binary/train", "processing/binary/test"
+        )
 
 
 if __name__ == "__main__":

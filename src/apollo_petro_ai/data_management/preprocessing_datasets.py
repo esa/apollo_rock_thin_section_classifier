@@ -1,16 +1,16 @@
 import argparse
 import os
 import shutil
-from utils import load_file, get_filename
 from collections import defaultdict
+
+from utils import get_filename, load_file
 
 # TODO: Unfortunate truth is that all pds images are filtered out as they have no image_type field
 #  -> check processing_combined.py
 
 
 def get_photo_map_for_tag(tag, data):
-    """
-    Collect photos containing tag in their information. Group photos based on different tag information
+    """Collect photos containing tag in their information. Group photos based on different tag information
     Args:
         tag: what tag to look for
         data: data to collect and group photos from
@@ -28,8 +28,7 @@ def get_photo_map_for_tag(tag, data):
 
 
 def collect_pictures(data, src, data_folder):
-    """
-    Copy pictures from src folder to data_folder according to keys in data
+    """Copy pictures from src folder to data_folder according to keys in data
     Args:
         data: dictionary of data
         src: place where pictures are stored
@@ -72,8 +71,8 @@ def collect_pictures(data, src, data_folder):
             path = photo["filename"]
             photo_filename = get_filename(path)
             prefix = ""
-            if not photo_filename.startswith(photo["sample"]+","):
-                prefix = photo["sample"]+","
+            if not photo_filename.startswith(photo["sample"] + ","):
+                prefix = photo["sample"] + ","
 
             destination = os.path.join(folder_name, prefix + photo_filename)
             # Try copying file from src directory to destination, returning 1 if unsuccessful
@@ -83,19 +82,26 @@ def collect_pictures(data, src, data_folder):
     print(f"{not_found} photos not used out of {photos_processed} photos processed")
 
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Download images based on msm file of sample metadata')
-    parser.add_argument('input', type=str, action="store",
-                        help='input msm file name')
-    parser.add_argument('stored', type=str, action="store", nargs="?", default=None,
-                        help='path to already stored images. names should match NASA database')
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Download images based on msm file of sample metadata"
+    )
+    parser.add_argument("input", type=str, action="store", help="input msm file name")
+    parser.add_argument(
+        "stored",
+        type=str,
+        action="store",
+        nargs="?",
+        default=None,
+        help="path to already stored images. names should match NASA database",
+    )
 
     args = parser.parse_args()
 
     data_msm = load_file(args.input)
     print(str(len(data_msm)) + " samples")
 
-    samples_map = get_photo_map_for_tag('image_type', data_msm)
+    samples_map = get_photo_map_for_tag("image_type", data_msm)
 
     data_dir = "../datasets/"
-    collect_pictures(samples_map, args.stored, data_dir + 'image_type')
+    collect_pictures(samples_map, args.stored, data_dir + "image_type")

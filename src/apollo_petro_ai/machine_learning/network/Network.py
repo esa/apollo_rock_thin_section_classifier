@@ -1,21 +1,28 @@
-import time
-from pprint import pprint
+import os
 import pickle
 import re
+import shutil
+from collections import defaultdict
+from pprint import pprint
+from typing import Any, Dict
 
 import numpy as np
 import tensorflow as tf
-from keras import applications
+import wandb
+from keras import applications, callbacks, layers, losses, optimizers
 from keras import backend as K
-from keras import callbacks, layers, losses, optimizers
 from keras.layers import Dense, Dropout, GlobalAveragePooling2D, Input
 from keras.models import Model, Sequential
 from keras.utils import image_dataset_from_directory
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 from sklearn.cluster import KMeans
-from sklearn.metrics import accuracy_score, silhouette_score
 from sklearn.decomposition import PCA
-import wandb
+from sklearn.metrics import (
+    accuracy_score,
+    classification_report,
+    confusion_matrix,
+    silhouette_score,
+)
+
 from apollo_petro_ai.data_management.process.preprocessing_helper import (
     generate_splits,
     get_sample_id,
@@ -27,13 +34,14 @@ from apollo_petro_ai.machine_learning.network.network_utils import (
     reduce_to_group,
 )
 from apollo_petro_ai.plotting.create_figures import draw_PR_curve
-import os
-import shutil
-from collections import defaultdict
 
 CROP_PROPORTION = 0.875  # Standard for ImageNet.
 
-analyze_false_positives_data = {"target": None, "predictions": [], "files": []}
+analyze_false_positives_data: Dict[str, Any] = {
+    "target": None,
+    "predictions": [],
+    "files": [],
+}
 
 
 class Network(tf.keras.Model):
@@ -46,11 +54,11 @@ class Network(tf.keras.Model):
         self._epochs = parameters.get("epochs")
         self._finetune_epochs = parameters.get("fine_tune_epochs")
         self.batch_size = parameters.get("batch_size")
-        self.learning_rate = parameters.get("learning_rate")
+        self.learning_rate: float = parameters.get("learning_rate", 0.0001)
         self.fine_tune_learning_rate = parameters.get("fine_tune_learning_rate")
         self.cut_off = parameters.get("cut_off")
-        #self.saved_model, self.model = self.compile_model()
-    
+        # self.saved_model, self.model = self.compile_model()
+
     @property
     def epochs(self):
         return self._epochs
@@ -72,12 +80,11 @@ class Network(tf.keras.Model):
         data_augmentation.add(layers.Rescaling(1.0 / 255))
         data_augmentation.add(layers.RandomFlip(mode="horizontal"))
         data_augmentation.add(layers.RandomFlip(mode="vertical"))
-        data_augmentation.add(layers.RandomRotation(0.5)) 
-        return data_augmentation       
+        data_augmentation.add(layers.RandomRotation(0.5))
+        return data_augmentation
 
     def preprocessing(self, images_directory, ratio=0.25):
-        """
-        Split data from images_directory into a train and validation directory
+        """Split data from images_directory into a train and validation directory
         Args:
             images_directory: the directory where all the images are stored
 
@@ -89,8 +96,7 @@ class Network(tf.keras.Model):
         )
 
     def pretrained_model(self):
-        """
-        Get pretrained model, default is VGG16, but can be overriden with other network architectures
+        """Get pretrained model, default is VGG16, but can be overriden with other network architectures
         Returns:
             pretrained model
         """
@@ -101,8 +107,7 @@ class Network(tf.keras.Model):
         )
 
     def evaluate_trained_model(self, model, data_dir, draw_graphs=False):
-        """
-        Evaluates the trained model
+        """Evaluates the trained model
         Args:
             model: trained model
             data_dir: directory where images are stored that we want to model to predict the classes of
@@ -112,7 +117,6 @@ class Network(tf.keras.Model):
             accuracy when predicting on individual images and accuracy when grouping images based on the same sample ID
             and using collective prediction
         """
-        
         # Load evaluation data
         eval_ds = image_dataset_from_directory(
             data_dir,
@@ -125,10 +129,12 @@ class Network(tf.keras.Model):
         eval_data = None
         predictions = None
         target_data = None
-        
+
         # Collect all file paths, but only keep label and filename
         eval_ds_files = eval_ds.file_paths
-        eval_ds_files = list(map(lambda path: path[path.find("\\") + 1 :], eval_ds_files))
+        eval_ds_files = list(
+            map(lambda path: path[path.find("\\") + 1 :], eval_ds_files)
+        )
         analyze_false_positives_data["files"] = eval_ds_files
 
         # Iterate over the dataset, predicting in batches
@@ -151,6 +157,9 @@ class Network(tf.keras.Model):
         predictions = tf.nn.sigmoid(predictions)
         analyze_false_positives_data["target"] = target_data
         analyze_false_positives_data["predictions"].append(predictions)
+
+        if target_data is None or predictions is None:
+            raise ValueError("No data was processed. Ensure the dataset is not empty.")
 
         print("---------- Evaluation as Image -----------")
         # Have target_data and predictions be binary. Predictions > 0.5 since we are using sigmoid
@@ -179,8 +188,7 @@ class Network(tf.keras.Model):
         return accuracy, group_accuracy
 
     def analyze_false_positives(self, args):
-        """
-        Check for repeated false positives
+        """Check for repeated false positives
         Args:
             args: arguments passed from command line
 
@@ -192,7 +200,7 @@ class Network(tf.keras.Model):
 
         # Train and evaluate model
         _, _ = self.evaluate_trained_model(self.model, self.validation_directory)
-        
+
         t = analyze_false_positives_data["target"]
         # Unpack predictions into flat list
         p = list(map(list, zip(*analyze_false_positives_data["predictions"])))
@@ -206,11 +214,11 @@ class Network(tf.keras.Model):
         data = list(filter(lambda x: sum(x[2]) / len(x[2]) != x[0], data))
 
         pprint(data)
-        
-        
-    def create_train_val_split_with_group_limit(self, original_train_dir, original_val_dir, new_train_dir, new_val_dir):
-        """
-        Creates new train and validation directories with at most one image per group.
+
+    def create_train_val_split_with_group_limit(
+        self, original_train_dir, original_val_dir, new_train_dir, new_val_dir
+    ):
+        """Creates new train and validation directories with at most one image per group.
 
         Args:
             original_train_dir: Path to the original training directory.
@@ -226,7 +234,9 @@ class Network(tf.keras.Model):
                     continue  # Skip non-directory entries
 
                 new_class_dir = os.path.join(new_dir, class_name)
-                os.makedirs(new_class_dir, exist_ok=True)  # Create class directory if it doesn't exist
+                os.makedirs(
+                    new_class_dir, exist_ok=True
+                )  # Create class directory if it doesn't exist
 
                 for filename in os.listdir(class_dir):
                     file_path = os.path.join(class_dir, filename)
@@ -244,22 +254,20 @@ class Network(tf.keras.Model):
         os.makedirs(new_val_dir, exist_ok=True)
 
         # Keep track of how many images from each group have been added
-        group_counts = defaultdict(int)
+        group_counts: defaultdict = defaultdict(int)
 
         # Process training directory first
         process_directory(original_train_dir, new_train_dir, group_counts)
 
         # Process validation directory, allowing one more image per group for validation
         process_directory(original_val_dir, new_val_dir, group_counts)
-        
+
     def fetch_for_train(self):
-        """
-        Used for fetching train and validation data and configuring both datasets for performance.
+        """Used for fetching train and validation data and configuring both datasets for performance.
         Also calculates class weights to accommodate for imbalance in dataset
         Returns:
             training dataset, validation dataset, and class weights
         """
-
         # Get training dataset
         train_ds = image_dataset_from_directory(
             self.training_directory,
@@ -285,9 +293,8 @@ class Network(tf.keras.Model):
         valid_ds = valid_ds.prefetch(buffer_size=AUTOTUNE)
         return train_ds, valid_ds, class_weights
 
-    def fine_tune(self, model, log_path="1_binary_classifier/logs/ft", fold=''):
-        """
-        Main loop for fine-tuning the model
+    def fine_tune(self, model, log_path="1_binary_classifier/logs/ft", fold=""):
+        """Main loop for fine-tuning the model
         Args:
             model: already trained model that is to be fine-tuned
             log_path: where to log information
@@ -311,11 +318,13 @@ class Network(tf.keras.Model):
 
         # Using SGD this time with a very low learning rate. No need for it to be adaptive
         model.compile(
-           loss=losses.BinaryCrossentropy(from_logits=True),
-           optimizer=optimizers.SGD(learning_rate=self.fine_tune_learning_rate, momentum=0.9),
-           metrics=["accuracy"],
+            loss=losses.BinaryCrossentropy(from_logits=True),
+            optimizer=optimizers.SGD(
+                learning_rate=self.fine_tune_learning_rate, momentum=0.9
+            ),
+            metrics=["accuracy"],
         )
-        
+
         # Train network
         h = model.fit(
             train_ds,
@@ -324,16 +333,18 @@ class Network(tf.keras.Model):
             class_weight=class_weights,
             callbacks=[callback, early_stop],
         )
-        
+
         # Log loss to wandb
-        # wandb.log({f"Fine-tune loss{fold}": np.array(h.history['loss'])}) 
-        # wandb.log({f"Fine-tune val loss{fold}": np.array(h.history['val_loss'])}) 
+        # wandb.log({f"Fine-tune loss{fold}": np.array(h.history['loss'])})
+        # wandb.log({f"Fine-tune val loss{fold}": np.array(h.history['val_loss'])})
 
         # Log loss to wandb for each epoch
-        for epoch in range(len(np.array(h.history['loss']))):
-            wandb.log({f"Fine-tune loss{fold}": np.array(h.history['loss'][epoch])})
-            wandb.log({f"Fine-tune val loss{fold}": np.array(h.history['val_loss'][epoch])})
-                
+        for epoch in range(len(np.array(h.history["loss"]))):
+            wandb.log({f"Fine-tune loss{fold}": np.array(h.history["loss"][epoch])})
+            wandb.log(
+                {f"Fine-tune val loss{fold}": np.array(h.history["val_loss"][epoch])}
+            )
+
         return h, model
 
     def compile_model(self):
@@ -354,7 +365,7 @@ class Network(tf.keras.Model):
         outputs = Dense(1)(features)
 
         model = Model(inputs=inputs, outputs=outputs)
-        
+
         # Compile the model. Using Adam as it is an adaptive optimizer
         model.compile(
             loss=losses.BinaryCrossentropy(from_logits=True),
@@ -370,12 +381,11 @@ class Network(tf.keras.Model):
             show_trainable=False,
             layer_range=None,
         )
-        
+
         return saved_model, model
 
-    def train(self, fine_tune=False, fold=''):
-        """
-        Main loop for training the network
+    def train(self, fine_tune: bool = False, fold: str = ""):
+        """Main loop for training the network
         Args:
             fine_tune: whether the model is scheduled to be fine-tuned
 
@@ -383,7 +393,7 @@ class Network(tf.keras.Model):
             The best accuracy, loss and trained model
         """
         # self.saved_model, self.model = self.compile_model()
-        
+
         # Make sure to save the best model
         callback = callbacks.ModelCheckpoint(
             "1_binary_classifier/output/binary-model-tl-{val_accuracy:.2f}.keras",
@@ -405,12 +415,17 @@ class Network(tf.keras.Model):
             class_weight=class_weights,
             callbacks=[callback, early_stop],
         )
-        
+
         # Log loss to wandb
-        for epoch in range(len(np.array(history.history['loss']))):
-            wandb.log({f"Loss{fold}": np.array(history.history['loss'][epoch])}, step=epoch)
-            wandb.log({f"Val loss{fold}": np.array(history.history['val_loss'][epoch])}, step=epoch)
-             
+        for epoch in range(len(np.array(history.history["loss"]))):
+            wandb.log(
+                {f"Loss{fold}": np.array(history.history["loss"][epoch])}, step=epoch
+            )
+            wandb.log(
+                {f"Val loss{fold}": np.array(history.history["val_loss"][epoch])},
+                step=epoch,
+            )
+
         # If the model is scheduled to be fine-tuned, unfreeze the transfer learning model and freeze the layers
         # up till the specified layer by cut_off
         if fine_tune:
@@ -426,8 +441,7 @@ class Network(tf.keras.Model):
         return acc, loss, model
 
     def collect_representations(self, layer_id, ds):
-        """
-        Collect all representations for images from certain layer, perform dimensionality reduction,
+        """Collect all representations for images from certain layer, perform dimensionality reduction,
         cluster, and calculate metrics
         Args:
             layer_id: the layer to extract representations from
@@ -445,7 +459,13 @@ class Network(tf.keras.Model):
             im, _, file_names = data_batch
             # Extract the sample id and save information
             for file in file_names:
-                sample_id = re.search(r"((\d+),\d*)", str(file)).group(2)
+                match = re.search(r"((\d+),\d*)", str(file))
+                if match:
+                    sample_id = match.group(2)
+                else:
+                    raise ValueError(
+                        f"Could not extract sample ID from file name: {file}"
+                    )
                 info_per_sample_id.append(sample_info.get(sample_id))
             # Collect all flattened representations
             rep = self.get_flattened_representations(im, layer_id)
@@ -466,8 +486,7 @@ class Network(tf.keras.Model):
         print(silhouette_score(vis_ex, labels))
 
     def get_flattened_representations(self, x, block_group):
-        """
-        Passes data through model and collects flattened representations
+        """Passes data through model and collects flattened representations
         Args:
             x: current batch of images
             block_group: which block group to extract representations from
@@ -495,8 +514,7 @@ class Network(tf.keras.Model):
             break  # only first batch for now
 
     def hyperparameter_cross_validation(self, path, splits, fine_tune):
-        """
-        Train network and do cross validation
+        """Train network and do cross validation
         Args:
             path: directory where all images are saved
             splits: how many splits to use for K-fold
@@ -505,28 +523,31 @@ class Network(tf.keras.Model):
         Returns:
             prints fold loss and accuracy as well as final average loss and accuracy over all folds
         """
-        
         folds, X, y = generate_splits(path, splits)
-        
+
         scores = []
         losses = []
         group_accuracies = []
         for fold_idx, (train, val) in enumerate(folds):
             print("\nFold: ", fold_idx)
-            
+
             # Move the files into their respective folders, by splitting in validation and train directory
-            process_split(X, y, train, val, self.training_directory, self.validation_directory)
+            process_split(
+                X, y, train, val, self.training_directory, self.validation_directory
+            )
 
             # Reinitialize the model
             self.saved_model, self.model = self.compile_model()
-            
+
             # Train the model
             accuracy, loss, model = self.train(fine_tune)
             accuracy *= 100
-            
+
             # Evaluate on the validation set
-            _, group_accuracy = self.evaluate_trained_model(model, self.validation_directory)          
-            
+            _, group_accuracy = self.evaluate_trained_model(
+                model, self.validation_directory
+            )
+
             print("Fold loss: %.4f acc: %.4f" % (loss, accuracy))
             losses.append(loss)
             scores.append(accuracy)
@@ -537,11 +558,12 @@ class Network(tf.keras.Model):
         # Print average metrics across all folds
         print(f"Loss: {np.mean(losses):.4f} (+/- {np.std(losses):.4f})")
         print(f"Acc: {np.mean(scores):.2f} (+/- {np.std(scores):.2f})")
-        print(f"Sample accuracy: {np.mean(group_accuracies):.2f} (+/- {np.std(group_accuracies):.2f})")
+        print(
+            f"Sample accuracy: {np.mean(group_accuracies):.2f} (+/- {np.std(group_accuracies):.2f})"
+        )
 
     def cross_validation(self, path, all_train_path, splits, fine_tune=False):
-        """
-        Train network and do cross validation
+        """Train network and do cross validation
         Args:
             path: directory where all images are saved
             all_train_path: where to save training images temporarily after split of train test
@@ -553,18 +575,19 @@ class Network(tf.keras.Model):
         """
         # Generate folds, ensuring images of the same sample end up in the same class
         folds, X, y = generate_splits(path, splits, True)
-        
+
         scores = []
         losses = []
         test_group_accuracies = []
         test_accuracies = []
+        min_score: float = float("inf")
         for fold_idx, (train, test) in enumerate(folds):
             print("\nFold: ", fold_idx)
-            
+
             # Move the files into their respective folders, use all_train_path as a temporary directory
             # to split into the validation and train directory later
             process_split(X, y, train, test, all_train_path, self.test_directory)
-            
+
             # Move files from all_train_path to a train and validation directory
             self.preprocessing(all_train_path, ratio=0.4)
 
@@ -572,7 +595,7 @@ class Network(tf.keras.Model):
             self.saved_model, self.model = self.compile_model()
 
             # train network
-            accuracy, loss, model = self.train(fine_tune, fold=f' {fold_idx}')
+            accuracy, loss, model = self.train(fine_tune, fold=f" {fold_idx}")
             accuracy *= 100
 
             print("Fold loss: %.4f acc: %.4f" % (loss, accuracy))
@@ -581,39 +604,50 @@ class Network(tf.keras.Model):
             scores.append(accuracy)
 
             # Evaluate on the test set
-            validation_acc, group_accuracy = self.evaluate_trained_model(model, self.test_directory)
+            validation_acc, group_accuracy = self.evaluate_trained_model(
+                model, self.test_directory
+            )
             test_accuracies.append(100 * validation_acc)
             test_group_accuracies.append(100 * group_accuracy)
-            
-            wandb.log({'Fold loss': loss})
-            wandb.log({'Fold accuracy': accuracy})
-            wandb.log({'Test accuracy': validation_acc*100})
-            wandb.log({'Test group accuracy': group_accuracy*100})
-            
+
+            wandb.log({"Fold loss": loss})
+            wandb.log({"Fold accuracy": accuracy})
+            wandb.log({"Test accuracy": validation_acc * 100})
+            wandb.log({"Test group accuracy": group_accuracy * 100})
+
             if len(scores) > 1:
                 if scores[-1] < min_score:
                     min_score = scores[-1]
-                    self.save_model(self.saved_model, f'simclr_binary_finetune_fold_{fold_idx}')
-                    self.save_model(self.model, f'simclr_binary_model_fold_{fold_idx}')
+                    self.save_model(
+                        self.saved_model, f"simclr_binary_finetune_fold_{fold_idx}"
+                    )
+                    self.save_model(self.model, f"simclr_binary_model_fold_{fold_idx}")
             else:
                 min_score = scores[0]
-                self.save_model(self.saved_model, f'simclr_binary_finetune_fold_{fold_idx}')
-                self.save_model(self.model, f'simclr_binary_model_fold_{fold_idx}')
-                
+                self.save_model(
+                    self.saved_model, f"simclr_binary_finetune_fold_{fold_idx}"
+                )
+                self.save_model(self.model, f"simclr_binary_model_fold_{fold_idx}")
+
             K.clear_session()
 
         # Print average metrics
         print(f"Loss: {np.mean(losses):.4f} (+/- {np.std(losses):.4f})")
         print(f"Acc: {np.mean(scores):.2f} (+/- {np.std(scores):.2f})")
-        print(f"TEST accuracy: {np.mean(test_accuracies):.2f} (+/- {np.std(test_accuracies):.2f})")
-        print(f"TEST group accuracy: {np.mean(test_group_accuracies):.2f} (+/- {np.std(test_group_accuracies):.2f})")
+        print(
+            f"TEST accuracy: {np.mean(test_accuracies):.2f} (+/- {np.std(test_accuracies):.2f})"
+        )
+        print(
+            f"TEST group accuracy: {np.mean(test_group_accuracies):.2f} (+/- {np.std(test_group_accuracies):.2f})"
+        )
 
     def save_model(self, model, run_name):
         # "model.h5" is saved in wandb.run.dir & will be uploaded at the end of training
-        model.save_weights(os.path.join(wandb.run.dir, f"{run_name}.weights.h5"), overwrite=True)
+        model.save_weights(
+            os.path.join(wandb.run.dir, f"{run_name}.weights.h5"), overwrite=True
+        )
         # model.save(os.path.join(wandb.run.dir, f"{run_name}.keras"), overwrite=True)
 
         # Save a model file manually from the current directory:
         wandb.save(f"{run_name}.weights.h5")
         # wandb.save(f"{run_name}.keras")
-        

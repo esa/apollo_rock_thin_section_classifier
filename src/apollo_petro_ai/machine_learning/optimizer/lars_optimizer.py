@@ -5,6 +5,7 @@
 """Functions and classes related to optimization (weight updates)."""
 
 import re
+from typing import Dict, List, Optional, Tuple
 
 import tensorflow as tf
 
@@ -19,16 +20,21 @@ class LARSOptimizer(tf.keras.optimizers.Optimizer):
     I. Gitman, and B. Ginsburg. (https://arxiv.org/abs/1708.03888)
     """
 
-    def __init__(self,
-                 learning_rate=0.1,
-                 momentum=0.9,
-                 use_nesterov=False,
-                 weight_decay=0.0,
-                 exclude_from_weight_decay=None,
-                 exclude_from_layer_adaptation=None,
-                 classic_momentum=True,
-                 eeta=EETA_DEFAULT,
-                 name="LARSOptimizer"):
+    exclude_from_weight_decay: Optional[List[str]]
+    exclude_from_layer_adaptation: Optional[List[str]]
+
+    def __init__(
+        self,
+        learning_rate: float = 0.1,
+        momentum: float = 0.9,
+        use_nesterov: bool = False,
+        weight_decay: float = 0.0,
+        exclude_from_weight_decay: Optional[List[str]] = None,
+        exclude_from_layer_adaptation: Optional[List[str]] = None,
+        classic_momentum: bool = True,
+        eeta: float = EETA_DEFAULT,
+        name: str = "LARSOptimizer",
+    ) -> None:
         """Constructs a LARSOptimizer.
 
         Args:
@@ -50,9 +56,11 @@ class LARSOptimizer(tf.keras.optimizers.Optimizer):
           eeta: A `float` for scaling of learning rate when computing trust ratio.
           name: The name for the scope.
         """
-        super(LARSOptimizer, self).__init__(name='LARSOptimizer', learning_rate=learning_rate)
+        super(LARSOptimizer, self).__init__(
+            name="LARSOptimizer", learning_rate=learning_rate
+        )
 
-        #self._set_hyper("learning_rate", learning_rate)
+        # self._set_hyper("learning_rate", learning_rate)
         self.momentum = momentum
         self.weight_decay = weight_decay
         self.use_nesterov = use_nesterov
@@ -61,22 +69,43 @@ class LARSOptimizer(tf.keras.optimizers.Optimizer):
         self.exclude_from_weight_decay = exclude_from_weight_decay
         # exclude_from_layer_adaptation is set to exclude_from_weight_decay if the
         # arg is None.
-        if exclude_from_layer_adaptation:
+        if exclude_from_layer_adaptation is not None:
             self.exclude_from_layer_adaptation = exclude_from_layer_adaptation
         else:
             self.exclude_from_layer_adaptation = exclude_from_weight_decay
 
-    def _create_slots(self, var_list):
+    def _create_slots(self, var_list: list) -> None:
+        """Create slots for the optimizer.
+
+        Args:
+            var_list: List of variables to create slots for.
+        """
         for v in var_list:
             self.add_slot(v, "Momentum")
 
-    def _resource_apply_dense(self, grad, param, apply_state=None):
+    def _resource_apply_dense(
+        self,
+        grad: tf.Tensor,
+        param: tf.Variable,
+        apply_state: Optional[Dict[Tuple[str, tf.DType], Dict[str, tf.Tensor]]] = None,
+    ) -> tf.Operation:
+        """Apply gradients to variables.
+
+        Args:
+            grad: The gradient
+            param: The variable
+            apply_state: Additional optimizer state from apply_gradients
+
+        Returns:
+            An operation that applies the gradient
+        """
         if grad is None or param is None:
             return tf.no_op()
 
         var_device, var_dtype = param.device, param.dtype.base_dtype
-        coefficients = ((apply_state or {}).get((var_device, var_dtype)) or
-                        self._fallback_apply_state(var_device, var_dtype))
+        coefficients = (apply_state or {}).get(
+            (var_device, var_dtype)
+        ) or self._fallback_apply_state(var_device, var_dtype)
         learning_rate = coefficients["lr_t"]
 
         param_name = param.name
@@ -94,7 +123,8 @@ class LARSOptimizer(tf.keras.optimizers.Optimizer):
                 trust_ratio = tf.where(
                     tf.greater(w_norm, 0),
                     tf.where(tf.greater(g_norm, 0), (self.eeta * w_norm / g_norm), 1.0),
-                    1.0)
+                    1.0,
+                )
             scaled_lr = learning_rate * trust_ratio
 
             next_v = tf.multiply(self.momentum, v) + scaled_lr * grad
@@ -117,17 +147,24 @@ class LARSOptimizer(tf.keras.optimizers.Optimizer):
                 trust_ratio = tf.where(
                     tf.greater(w_norm, 0),
                     tf.where(tf.greater(v_norm, 0), (self.eeta * w_norm / v_norm), 1.0),
-                    1.0)
+                    1.0,
+                )
             scaled_lr = trust_ratio * learning_rate
             next_param = param - scaled_lr * update
 
-        return tf.group(*[
-            param.assign(next_param, use_locking=False),
-            v.assign(next_v, use_locking=False)
-        ])
+        return tf.group(
+            *[
+                param.assign(next_param, use_locking=False),
+                v.assign(next_v, use_locking=False),
+            ]
+        )
 
-    def _use_weight_decay(self, param_name):
-        """Whether to use L2 weight decay for `param_name`."""
+    def _use_weight_decay(self, param_name: str) -> bool:
+        """Whether to use L2 weight decay for `param_name`.
+
+        Args:
+            param_name: Name of the parameter.
+        """
         if not self.weight_decay:
             return False
         if self.exclude_from_weight_decay:
@@ -136,22 +173,33 @@ class LARSOptimizer(tf.keras.optimizers.Optimizer):
                     return False
         return True
 
-    def _do_layer_adaptation(self, param_name):
-        """Whether to do layer-wise learning rate adaptation for `param_name`."""
+    def _do_layer_adaptation(self, param_name: str) -> bool:
+        """Whether to do layer-wise learning rate adaptation for `param_name`.
+
+        Args:
+            param_name: Name of the parameter.
+        """
         if self.exclude_from_layer_adaptation:
             for r in self.exclude_from_layer_adaptation:
                 if re.search(r, param_name) is not None:
                     return False
         return True
 
-    def get_config(self):
+    def get_config(self) -> dict:
+        """Get config of the optimizer.
+
+        Returns:
+            A dictionary containing the configuration of the optimizer.
+        """
         config = super(LARSOptimizer, self).get_config()
-        config.update({
-            "learning_rate": self._serialize_hyperparameter("learning_rate"),
-            "momentum": self.momentum,
-            "classic_momentum": self.classic_momentum,
-            "weight_decay": self.weight_decay,
-            "eeta": self.eeta,
-            "use_nesterov": self.use_nesterov,
-        })
+        config.update(
+            {
+                "learning_rate": self._serialize_hyperparameter("learning_rate"),
+                "momentum": self.momentum,
+                "classic_momentum": self.classic_momentum,
+                "weight_decay": self.weight_decay,
+                "eeta": self.eeta,
+                "use_nesterov": self.use_nesterov,
+            }
+        )
         return config

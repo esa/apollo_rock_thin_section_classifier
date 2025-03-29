@@ -2,26 +2,30 @@
 # processing data from msm data file, and downloading images from the nasa database
 
 import os
+import random
 import re
 import shutil
-from urllib.request import Request, urlopen
 import urllib.error
+from urllib.request import Request, urlopen
+
 from bs4 import BeautifulSoup
-import random
+
 from .utils import get_filename, load_file, write_to_file
 
 
 class ImageFinder:
     """Authors: Piotr Knapczyk (piotr.knapczyk@me.com) and Romeo Haak
     Parses NASA's lunar Rock Sample Images dataset and saves a file 'full_database_tree' with a list of stored links
-    pointing to images and label files that can be downloaded for further use"""
+    pointing to images and label files that can be downloaded for further use
+    """
 
     def __init__(self):
-        self.valid_modes = ['combine', 'all', 'missed only']
+        self.valid_modes = ["combine", "all", "missed only"]
 
-    def _get_url_of_images(self, url, sub_dir='.*', avoid_dir=None, missed_url_file=None):
-        """
-        Recursively find all subdirectories from a given root url, but only save
+    def _get_url_of_images(
+        self, url, sub_dir=".*", avoid_dir=None, missed_url_file=None
+    ):
+        """Recursively find all subdirectories from a given root url, but only save
         the links that include the subdirectory specified in sub_dir
         Args:
             url: current root url
@@ -43,8 +47,8 @@ class ImageFinder:
         # Try except block as it may happen that the site does not respond to a request
         try:
             a = urlopen(req).read()
-            soup = BeautifulSoup(a, 'html.parser')
-            x = (soup.find_all('a'))
+            soup = BeautifulSoup(a, "html.parser")
+            x = soup.find_all("a")
             for i in x:
                 file_name = i.extract().get_text()
                 url_new = url + file_name
@@ -52,65 +56,76 @@ class ImageFinder:
                 # If the found file is a directory, not the ../ directory to avoid getting an infinite loop,
                 # call this function again with the found directory as the new root.
                 # For efficiency, avoid opening subdirectories that we do not wish to save
-                if file_name[-1] == '/' and file_name[0] != '.' and not file_name[:-1] in avoid_dir:
+                if (
+                    file_name[-1] == "/"
+                    and file_name[0] != "."
+                    and file_name[:-1] not in avoid_dir
+                ):
                     sub_urls = self._get_url_of_images(url_new, sub_dir, avoid_dir)
                     name_list.extend(sub_urls)
                 # Images of laboratory equipment are not useful for the geological classifier, hence you probably only
                 # want to save images that are in the THIN_SECTIONS directories, (avoiding the ../)
-                if re.search(rf'{sub_dir}/[^=.]', url_new):
+                if re.search(rf"{sub_dir}/[^=.]", url_new):
                     name_list.append(url_new)
         except urllib.error.URLError:
             # In case there was an url that could not be opened, save them if filestream is specified
             if save_urls:
-                missed_url_file.write(url + '\n')
+                missed_url_file.write(url + "\n")
             else:
-                print(f'following url was never loaded: {url}')
+                print(f"following url was never loaded: {url}")
 
         return name_list
 
     def director(self, mode):
-        """
-        Handles main logic of this class, calling the correct functions based on the specified mode
+        """Handles main logic of this class, calling the correct functions based on the specified mode
         Args:
             mode: which mode to run
 
         """
         if mode in self.valid_modes:
-            if mode == 'combine':
-                data = load_file('database_tree')
-                data_extra = load_file('database_tree_rest')
+            if mode == "combine":
+                data = load_file("database_tree")
+                data_extra = load_file("database_tree_rest")
 
                 data.extend(data_extra)
-                destination_file_name = 'full_database_tree'
+                destination_file_name = "full_database_tree"
 
-            elif mode == 'missed only':
+            elif mode == "missed only":
                 data = []
-                with open('leftover_urls', 'r') as leftover_urls:
+                with open("leftover_urls", "r") as leftover_urls:
                     missed_urls = leftover_urls.read().splitlines()
                     for missed in missed_urls:
-                        retrieved = self._get_url_of_images(missed, 'THIN_SECTIONS',
-                                                            ['REDUCED_RES_JPEG', 'THUMBNAIL_JPEG'])
+                        retrieved = self._get_url_of_images(
+                            missed,
+                            "THIN_SECTIONS",
+                            ["REDUCED_RES_JPEG", "THUMBNAIL_JPEG"],
+                        )
                         data.extend(retrieved)
-                destination_file_name = 'database_tree_rest'
+                destination_file_name = "database_tree_rest"
 
             else:
-                with open('leftover_urls', 'w') as leftovers:
-                    data = self._get_url_of_images("https://pdsimage2.wr.usgs.gov/Missions/Apollo/"
-                                                   "Lunar_Sample_Photographs/", 'THIN_SECTIONS',
-                                                   ['REDUCED_RES_JPEG', 'THUMBNAIL_JPEG'], leftovers)
-                destination_file_name = 'database_tree'
+                with open("leftover_urls", "w") as leftovers:
+                    data = self._get_url_of_images(
+                        "https://pdsimage2.wr.usgs.gov/Missions/Apollo/"
+                        "Lunar_Sample_Photographs/",
+                        "THIN_SECTIONS",
+                        ["REDUCED_RES_JPEG", "THUMBNAIL_JPEG"],
+                        leftovers,
+                    )
+                destination_file_name = "database_tree"
 
             write_to_file(data, destination_file_name)
 
         else:
-            print(f'Invalid mode: {mode}, enter one of the following: {self.valid_modes}')
+            print(
+                f"Invalid mode: {mode}, enter one of the following: {self.valid_modes}"
+            )
 
 
 # All functions below are used for actually downloading files
 # Only works for PDS
 def download_sample(data, data_folder="filtered_data"):
-    """
-    Call _processing with an url download callback
+    """Call _processing with an url download callback
     Args:
         data: data to process
         data_folder: where to store the retrieved data
@@ -119,15 +134,18 @@ def download_sample(data, data_folder="filtered_data"):
 
     """
     import urllib.request as ur
+
     callback = ur.urlretrieve
-    _processing(data, callback, data_folder, 'FULL_RES_JPEG')
+    _processing(data, callback, data_folder, "FULL_RES_JPEG")
 
 
 # Only works for PDS
-def download_sample_from_local(data, src, data_folder='filtered_data', download_if_not_found=False):
-    """
-    Copies files from src folder to destination data_folder. In case download_if_not_found = True,
+def download_sample_from_local(
+    data, src, data_folder="filtered_data", download_if_not_found=False
+):
+    """Copies files from src folder to destination data_folder. In case download_if_not_found = True,
     this function downloads the file if they were not found in the src folder.
+
     Args:
         data: dictionary containing data
         src: folder to look for existing images
@@ -150,14 +168,15 @@ def download_sample_from_local(data, src, data_folder='filtered_data', download_
                     return
         if download_if_not_found:
             import urllib.request as ur
+
             ur.urlretrieve(path, target)
-    _processing(data, callback, data_folder, 'FULL_RES_JPEG')
+
+    _processing(data, callback, data_folder, "FULL_RES_JPEG")
 
 
 # Once again, only works for PDS
 def _processing(data, download_callback, data_folder, photo_path):
-    """
-    constructs and checks necessary paths for downloading or copying to data_folder
+    """Constructs and checks necessary paths for downloading or copying to data_folder
     Args:
         data: dictionary containing data to process
         download_callback: supplied function that should be used to download or copy a file
@@ -190,8 +209,7 @@ def _processing(data, download_callback, data_folder, photo_path):
 
 
 def process_local_samples(data, src, data_folder, random_photo_from_sample=False):
-    """
-    Copy pictures from src folder to data_folder according to keys in data
+    """Copy pictures from src folder to data_folder according to keys in data
     Args:
         data: dictionary of data
         src: place where pictures are stored
@@ -236,29 +254,31 @@ def process_local_samples(data, src, data_folder, random_photo_from_sample=False
                 path = photo["filename"]
                 filename = get_filename(path)
                 prefix = ""
-                if not filename.startswith(sample["SAMPLE_ID"]+","):
-                    prefix = sample["SAMPLE_ID"]+","
+                if not filename.startswith(sample["SAMPLE_ID"] + ","):
+                    prefix = sample["SAMPLE_ID"] + ","
 
                 destination = os.path.join(folder_name, prefix + filename)
                 return callback(filename, destination)
+
             # Take random photo from sample
             if random_photo_from_sample:
-                handle_photo(random.choice(sample['photos']))
+                handle_photo(random.choice(sample["photos"]))
             else:
                 # Handle photos for this sample and keep track whether no photos were found of this sample
                 for photo_sample in sample["photos"]:
                     file_not_found = handle_photo(photo_sample)
                     not_found += file_not_found
-                    sample_photos_found += 1-file_not_found
+                    sample_photos_found += 1 - file_not_found
             if sample_photos_found == 0:
                 samples_not_used += 1
 
-    print(f"{samples_not_used} samples not used out of {samples_processed} samples processed")
+    print(
+        f"{samples_not_used} samples not used out of {samples_processed} samples processed"
+    )
 
 
 def download_labels(urlfile, label_folder):
-    """
-    Download label files from urls specified in url file and place them in label_folder
+    """Download label files from urls specified in url file and place them in label_folder
     Args:
         urlfile: file containing urls
         label_folder: where to place the downloaded label files
@@ -272,11 +292,11 @@ def download_labels(urlfile, label_folder):
     file_list = os.listdir(label_folder)
     for url in urls:
         # Get only those from the DATA folder as they contain most information and avoid duplicates that way
-        if re.search('DATA[A-Za-z0-9/_-]+.LBL', url):
+        if re.search("DATA[A-Za-z0-9/_-]+.LBL", url):
             file_name = get_filename(url)
             # Do not need to do an url fetch if file is already downloaded
             if file_name not in file_list:
                 destination = os.path.join(label_folder, file_name)
                 # Open url and save it to destination
-                with urlopen(url) as response, open(destination, 'wb') as out_file:
+                with urlopen(url) as response, open(destination, "wb") as out_file:
                     shutil.copyfileobj(response, out_file)

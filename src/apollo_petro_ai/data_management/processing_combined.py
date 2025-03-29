@@ -1,28 +1,28 @@
 import collections
 import itertools
 import re
-from bs4 import BeautifulSoup
-import urllib.request
 import urllib.parse
-from .utils import load_file, write_to_file, join_dicts
+import urllib.request
 from functools import reduce
+
+from bs4 import BeautifulSoup
+
+from .utils import join_dicts, load_file, write_to_file
 
 
 def combine_pds_and_lunar():
-    """
-    Loads and combines pds and lunar dictionaries
+    """Loads and combines pds and lunar dictionaries
     Returns:
         Does not return but creates a file with the combined data
     """
-    pds = load_file('pds_data.msm')
-    lunar = load_file('lunar_institute_data.msm')
+    pds = load_file("pds_data.msm")
+    lunar = load_file("lunar_institute_data.msm")
     combined = join_dicts(lunar, pds)
-    write_to_file(combined, 'combined_data.msm')
+    write_to_file(combined, "combined_data.msm")
 
 
 def frequency_of_values(dkey, data, count_images=False):
-    """
-    For a specific key in the dictionary, check how often a certain assigned value occurs
+    """For a specific key in the dictionary, check how often a certain assigned value occurs
     Args:
         dkey: key in the dictionary
         data: dictionary containing samples
@@ -32,18 +32,20 @@ def frequency_of_values(dkey, data, count_images=False):
         Count of assigned values
     """
     if count_images:
-        result = reduce((lambda x, y: x + [y[dkey]] * len(y['photos'])), data.values(), [])
+        result: list[float] = reduce(
+            (lambda x, y: x + [y[dkey]] * len(y["photos"])), data.values(), []
+        )
     else:
         result = reduce((lambda x, y: x + [y[dkey]]), data.values(), [])
     return collections.Counter(result).most_common()
 
 
 def get_information_from_curator(key, sample_id):
-    """
-    Get information from curator website. Look up the sample id and extract the information specified in key.
+    """Get information from curator website. Look up the sample id and extract the information specified in key.
     For example, when key is Rock Type, it will extract what is saved in the Rock Type field. Have a look at
     https://curator.jsc.nasa.gov/lunar/samplecatalog/sampleinfo.cfm?sample=70017 to see an example of
     the information present.
+
     Args:
         key: what information to extract
         sample_id: the id of this particular rock sample
@@ -51,7 +53,10 @@ def get_information_from_curator(key, sample_id):
     Returns:
         The requested information if it could be downloaded
     """
-    link = "https://curator.jsc.nasa.gov/lunar/samplecatalog/sampleinfo.cfm?sample=" + sample_id
+    link = (
+        "https://curator.jsc.nasa.gov/lunar/samplecatalog/sampleinfo.cfm?sample="
+        + sample_id
+    )
     print("Downloading data: " + sample_id)
     try:
         with urllib.request.urlopen(link) as response:
@@ -68,28 +73,27 @@ def get_information_from_curator(key, sample_id):
 
 
 def extract_grain(sample):
-    """
-    Processes sample and extract grain information if present. Also standardize a bit what is returned
+    """Processes sample and extract grain information if present. Also standardize a bit what is returned
     Args:
         sample:
             the sample to process
     Returns:
         Grain description
     """
-    filter_tag = 'grain'
+    filter_tag = "grain"
     grain_key = "grain_size"
     sample[grain_key] = None
 
     # Helper function to find 'grain' in the description if present
     def find_desc(description):
         if filter_tag in description:
-            for tag in description.split(', '):
+            for tag in description.split(", "):
                 if filter_tag in tag:
                     return tag
         return None
 
     if "SAMPLE_DESCRIPTION" in sample:
-        descriptor = find_desc(sample['SAMPLE_DESCRIPTION'])
+        descriptor = find_desc(sample["SAMPLE_DESCRIPTION"])
         if descriptor:
             return descriptor
 
@@ -111,8 +115,7 @@ def extract_grain(sample):
 
 
 def get_rock_category(sample):
-    """
-    Divides samples into 4 main categories - basalts, pristine highland rocks, breccias and regolith (soil).
+    """Divides samples into 4 main categories - basalts, pristine highland rocks, breccias and regolith (soil).
     Classification is saved into "rock_group"
     Args:
         sample: sample to get lithology information from
@@ -126,8 +129,14 @@ def get_rock_category(sample):
         return None
     else:
         lowercase_lithology = lithology.lower()
-        rock_category = {'breccia': 'breccia', 'basalt': 'basalt', 'soil': 'regolith',
-                         'rake': 'rake', 'crustal': 'crustal', 'core': 'core'}
+        rock_category = {
+            "breccia": "breccia",
+            "basalt": "basalt",
+            "soil": "regolith",
+            "rake": "rake",
+            "crustal": "crustal",
+            "core": "core",
+        }
         for rock_group in rock_category.keys():
             if rock_group in lowercase_lithology:
                 return rock_category.get(rock_group)
@@ -138,8 +147,7 @@ def get_rock_category(sample):
 
 
 def get_grain_category(grain_description):
-    """
-    Normalize grain category to either medium or fine-grained, otherwise return None
+    """Normalize grain category to either medium or fine-grained, otherwise return None
     Args:
         grain_description:
             description to extract grain category from
@@ -147,29 +155,29 @@ def get_grain_category(grain_description):
         medium or fine-grained or None depending on grain description
     """
     if grain_description:
-        if re.search('medium-grain|coarse-grain|corse-grain|coarsegrain', grain_description):
-            return 'medium-grain'
-        elif re.search('fine-grain|finegrained|fine grained', grain_description):
+        if re.search(
+            "medium-grain|coarse-grain|corse-grain|coarsegrain", grain_description
+        ):
+            return "medium-grain"
+        elif re.search("fine-grain|finegrained|fine grained", grain_description):
             return "fine-grain"
     return None
 
 
 def get_breccia_or_basalt(data):
-    """
-    Get the rock type and return it if it is breccia or basalt
+    """Get the rock type and return it if it is breccia or basalt
     Args:
         data: current sample
 
     Returns:
         Rock type if it is breccia or basalt
     """
-    rock_type = data['rock_type_category']
+    rock_type = data["rock_type_category"]
     return rock_type if rock_type == "breccia" or rock_type == "basalt" else None
 
 
 def change_paths(data):
-    """
-    Tries to standardize the way the msm files are saved
+    """Tries to standardize the way the msm files are saved
     Args:
         data:
             combined msm files
@@ -214,25 +222,31 @@ def change_paths(data):
                     image.pop("photo_number", None)
                     image.pop("photo_type", None)
                     # Since this picture was a duplicate, update it with the info saved in the lunar samples
-                    image.update(data['photos'][duplicates_map[phot_nr]])
+                    image.update(data["photos"][duplicates_map[phot_nr]])
                     # Duplicate was found, so we can remove it as a potential duplicate candidate
                     duplicates_map.pop(phot_nr)
         # Keep those photos in the lunar samples of which no duplicate was found
-        data["photos"] = [x for x in data["photos"] if x['photo_number'].lower() in duplicates_map.keys()]
+        data["photos"] = [
+            x
+            for x in data["photos"]
+            if x["photo_number"].lower() in duplicates_map.keys()
+        ]
         # Add pds photos to existing dictionary
         data["photos"] += data["PHOTOS"]
         data.pop("PHOTOS", None)
 
     # Useful to save SAMPLE_ID like done in pds samples for easy access
     if "SAMPLE_ID" not in data:
-        data['SAMPLE_ID'] = data["photos"][0]["sample"]
+        data["SAMPLE_ID"] = data["photos"][0]["sample"]
 
-    lithology_normalised = ""
+    lithology_normalised: str = ""
     # Extract rock type information and save as lithology. Ask curator if needed
     if "SUPER_CLASS" in data and data["SUPER_CLASS"] != "":
         lithology_normalised += data["SUPER_CLASS"].lower() + " "
-    elif 'SAMPLE_ID' in data:
-        data["SUPER_CLASS"] = get_information_from_curator("Rock Type", data["SAMPLE_ID"])
+    elif "SAMPLE_ID" in data:
+        data["SUPER_CLASS"] = get_information_from_curator(
+            "Rock Type", data["SAMPLE_ID"]
+        )
         if data["SUPER_CLASS"]:
             lithology_normalised += data["SUPER_CLASS"].lower() + " "
     data.pop("SUPER_CLASS", None)
@@ -240,38 +254,42 @@ def change_paths(data):
     if "lithology" in data:
         # Can happen that lithology is the same as the super class
         # in which case adding it twice does not give extra info
-        if data["lithology"] != "" and data["lithology"] != lithology_normalised.strip():
+        if (
+            data["lithology"] != ""
+            and data["lithology"] != lithology_normalised.strip()
+        ):
             lithology_normalised += data["lithology"].lower()
         data.pop("lithology", None)
 
     lithology_normalised = lithology_normalised.strip()  # Remove trailing spaces
-    if lithology_normalised == "":
-        lithology_normalised = None
 
     # Clean up old info that is now saved into lithology_normalised
-    data["lithology_normalised"] = lithology_normalised
+    data["lithology_normalised"] = (
+        None if lithology_normalised == "" else lithology_normalised
+    )
     if "lithology" in data:
         data.pop("lithology", None)
     if "SUPER_CLASS" in data:
         data.pop("SUPER_CLASS", None)
 
     # All functionality below is to extract extra information and save it in the dictionary for easy access
-    data['rock_type_category'] = get_rock_category(data)
-    data['breccia_or_basalt'] = get_breccia_or_basalt(data)
+    data["rock_type_category"] = get_rock_category(data)
+    data["breccia_or_basalt"] = get_breccia_or_basalt(data)
 
-    if 'curator_description' not in data:
-        data['curator_description'] = get_information_from_curator("Description", data['SAMPLE_ID'])
+    if "curator_description" not in data:
+        data["curator_description"] = get_information_from_curator(
+            "Description", data["SAMPLE_ID"]
+        )
 
     if "grain_size" not in data or data["grain_size"] is None:
         data["grain_size"] = extract_grain(data)
 
-    data["classification_category"] = get_grain_category(data['grain_size'])
+    data["classification_category"] = get_grain_category(data["grain_size"])
     return data
 
 
 def print_descriptions(data):
-    """
-    Get some info on the descriptions present in the data
+    """Get some info on the descriptions present in the data
     Args:
         data: dictionary potentially containing descriptions
 
@@ -280,26 +298,25 @@ def print_descriptions(data):
     """
     for k, v in data.items():
         print("Sample: " + k)
-        if 'SAMPLE_DESCRIPTION' in v:
-            print(v['SAMPLE_DESCRIPTION'])
+        if "SAMPLE_DESCRIPTION" in v:
+            print(v["SAMPLE_DESCRIPTION"])
         else:
             print("-- no NASA description --")
 
-        if 'description' in v:
-            print(v['description'])
+        if "description" in v:
+            print(v["description"])
         else:
             print("-- no Lunar Institute description --")
 
-        if 'curator_description' in v:
-            print(v['curator_description'])
+        if "curator_description" in v:
+            print(v["curator_description"])
         else:
             print("-- no curator description --")
         print("Grain data: " + str(v["grain_size"]))
 
 
 def clean_lunar(sample):
-    """
-    Clean lunar samples as images were accidentally scraped multiple times. If multiple pictures
+    """Clean lunar samples as images were accidentally scraped multiple times. If multiple pictures
     were present on one page, only the first one was scraped times the amount of pictures on that html page
 
     Args:
@@ -310,17 +327,19 @@ def clean_lunar(sample):
     """
     # For efficiency, group based on link as otherwise we may need to do 244 html requests instead of 58.
     grouped_photos = collections.defaultdict(list)
-    for key, value in itertools.groupby(sample['photos'], lambda x: x['original_url']):
+    for key, value in itertools.groupby(sample["photos"], lambda x: x["original_url"]):
         grouped_photos[key].extend(list(value))
 
     new_photos = []
     for photos in grouped_photos.values():
         # In case this particular link does have duplicates, correct the paths
         if len(photos) > 1:
-            file_name = photos[0]['photo_number']
+            file_name = photos[0]["photo_number"]
             # Construct link to fetch
-            main_link = "https://www.lpi.usra.edu/lunar/samples/atlas/thin_section/?mission=Apollo%2014&sample=14321&" \
-                        f"source_id={file_name}"
+            main_link = (
+                "https://www.lpi.usra.edu/lunar/samples/atlas/thin_section/?mission=Apollo%2014&sample=14321&"
+                f"source_id={file_name}"
+            )
             with urllib.request.urlopen(main_link) as response:
                 html = response.read()
                 parsed_html = BeautifulSoup(html, "lxml")
@@ -329,13 +348,13 @@ def clean_lunar(sample):
                 for i, photo in enumerate(photos):
                     # Get value associated to this row for the split header
                     elem = all_elem[i]
-                    elem = elem.find_next('td')
+                    elem = elem.find_next("td")
                     split = str(elem.text)
                     # Save information by replacing split with the corrected value
-                    photo['split'] = split
-                    photo['filename'] = re.sub(r'(?<=,)\d{4}', split, photo['filename'])
-                    url = photo['original_url']
-                    photo['original_url'] = re.sub(r'(?<=,)\d{4}', split, url)
+                    photo["split"] = split
+                    photo["filename"] = re.sub(r"(?<=,)\d{4}", split, photo["filename"])
+                    url = photo["original_url"]
+                    photo["original_url"] = re.sub(r"(?<=,)\d{4}", split, url)
                     new_photos.append(photo)
         # Otherwise, just add it immediately
         else:
@@ -343,7 +362,7 @@ def clean_lunar(sample):
     return new_photos
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # testing:
     # get file
     data_msm = load_file("combined_data.msm")
@@ -357,4 +376,4 @@ if __name__ == '__main__':
     print(frequency_of_values("rock_type_category", data_msm))
     print(frequency_of_values("breccia_or_basalt", data_msm))
 
-    write_to_file(data_msm, 'combined_data2x.msm')
+    write_to_file(data_msm, "combined_data2x.msm")
